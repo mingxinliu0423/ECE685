@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+
+# Hugging Face and caches
+.cache/
+.huggingface/
+~/.cache/
+~/.huggingface/
+
+# Data and outputs
+data/
+datasets/
+outputs/
+runs/
+wandb/
+logs/
+
+# Model checkpoints and large binaries
+*.pt
+*.bin
+*.safetensors
+*.onnx
+*.ckpt
+*.tar
+*.zip
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
