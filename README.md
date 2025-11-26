@@ -22,7 +22,8 @@ If automated downloads fail, follow these steps:
 1. Create `data/glue/sst2/` and place `train.tsv` and `dev.tsv` files with `sentence<TAB>label` columns (0/1 labels). A `data/README.md` file will be generated with these instructions the first time a failure is detected.
 2. (If needed) Download `distilbert-base-uncased` from Hugging Face, place it under `models/distilbert-base-uncased/`, and set `TRANSFORMERS_CACHE=models/` before running any scripts.
 
-## Extending for B and C
-- Person B (SparseLoRA): implement `build_sparse_lora_adapter` in `src/adapters/sparse_lora/sparse_lora.py` and swap the import used in `src/model.py`.
-- Person C (HiRA): implement `build_hira_adapter` in `src/adapters/hira/hira_adapter.py` and swap the import in `src/model.py`.
-Keep the training/eval loops untouched to ensure changes stay comparable to this baseline.
+## For Teammates B and C
+- Repo scope: minimal DistilBERT + LoRA baseline for SST-2; training/eval loops and data/model plumbing are stable—please keep them unchanged.
+- Person B (SparseLoRA): implement `build_sparse_lora_adapter` in `src/adapters/sparse_lora/sparse_lora.py`, then point `src/model.py` to use it instead of `build_lora_adapter`.
+- Person C (HiRA): implement `build_hira_adapter` in `src/adapters/hira/hira_adapter.py`, then swap `src/model.py` to use it.
+- Preserve the config/output structure so results stay comparable. If downloads fail, follow the manual data/model notes above.
