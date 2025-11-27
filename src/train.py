@@ -147,8 +147,9 @@ def main():
 
             # Add L1 regularization for Sparse LoRA
             if is_sparse_lora and sparse_cfg["method"] == "l1":
+                l1_lambda = float(sparse_cfg.get("l1_lambda", 0.0))
                 l1_loss = compute_l1_loss(base_model)
-                l1_weighted = sparse_cfg["l1_lambda"] * l1_loss
+                l1_weighted = l1_lambda * l1_loss
                 loss = loss + l1_weighted
                 running_l1_loss += l1_weighted.detach().float()
 

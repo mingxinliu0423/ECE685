@@ -24,6 +24,8 @@ logs/
 
 # Outputs directory - keep metrics but exclude model weights
 outputs/
+!outputs/
+!outputs/*/
 !outputs/*/metrics.json         
 !outputs/*/eval_results.txt      
 !outputs/*/speed_benchmark.txt  
@@ -47,3 +49,7 @@ outputs/
 .DS_Store
 Thumbs.db
 .vscode/
+
+
+sparse_lora.pdf
+todo.md
