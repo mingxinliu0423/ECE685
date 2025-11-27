@@ -1,0 +1,23 @@
+seed: 685
+model_name: distilbert-base-uncased
+task_name: sst2
+max_seq_len: 128
+train_batch_size: 16
+eval_batch_size: 32
+epochs: 3
+lr: 2e-4
+weight_decay: 0.01
+warmup_ratio: 0.06
+fp16: true
+output_dir: outputs/sst2_sparse_lora_prune
+save_every_epochs: 3
+
+# Sparse LoRA configuration with magnitude pruning
+sparse_lora:
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  target_modules: ["q_lin", "k_lin", "v_lin", "out_lin"]
+  method: "prune"        # Use magnitude pruning
+  prune_ratio: 0.3       # Prune 30% of smallest weights after training
+  l1_lambda: 0.0         # Not used for prune method

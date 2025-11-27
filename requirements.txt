@@ -1,7 +1,11 @@
-torch
+torch==1.13.1+cu116
+torchvision==0.14.1+cu116
+torchaudio==0.13.1
+
 transformers
 datasets
 peft
-accelerate
+accelerate==0.21.0
+
 scikit-learn
 pyyaml
