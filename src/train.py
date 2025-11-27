@@ -123,15 +123,30 @@ def main():
     is_sparse_lora = hasattr(unwrapped_model, "sparse_config")
     pruning_masks = None
 
+    # Training schedule for sparse methods
+    sparse_warmup_ratio = cfg.get("sparse_warmup_ratio", 0.0)
+    sparse_start_step = int(total_training_steps * sparse_warmup_ratio)
+    prune_at_epoch = -1  
+
+    # Layer-wise L1 weights (for non-uniform sparsity)
+    layer_weights = cfg.get("layer_l1_weights", None)
+
     if is_sparse_lora:
         sparse_cfg = unwrapped_model.sparse_config
         accelerator.print(f"\n=== Sparse LoRA Configuration ===")
         accelerator.print(f"  Method: {sparse_cfg['method']}")
         if sparse_cfg["method"] == "l1":
             accelerator.print(f"  L1 lambda: {sparse_cfg['l1_lambda']}")
+            if sparse_warmup_ratio > 0:
+                accelerator.print(f"  Sparse warmup: first {sparse_warmup_ratio:.1%} steps are dense")
+                accelerator.print(f"  Sparse training starts at step {sparse_start_step}/{total_training_steps}")
+            if layer_weights:
+                accelerator.print(f"  Layer-wise L1 weights: {layer_weights}")
         else:
             accelerator.print(f"  Prune ratio: {sparse_cfg['prune_ratio']:.1%}")
-        accelerator.print("=================================\n")
+            # Prune at the second-to-last epoch, then fine-tune in the last epoch
+            prune_at_epoch = max(1, cfg["epochs"] - 1)
+            accelerator.print(f"  Will prune at epoch {prune_at_epoch}, then fine-tune")
 
     for epoch in range(cfg["epochs"]):
         accelerator.print(f"Epoch {epoch + 1}/{cfg['epochs']}")
@@ -145,13 +160,14 @@ def main():
             outputs = base_model(**batch)
             loss = outputs.loss
 
-            # Add L1 regularization for Sparse LoRA
+            # Add L1 regularization for Sparse LoRA after warmup
             if is_sparse_lora and sparse_cfg["method"] == "l1":
-                l1_lambda = float(sparse_cfg.get("l1_lambda", 0.0))
-                l1_loss = compute_l1_loss(base_model)
-                l1_weighted = l1_lambda * l1_loss
-                loss = loss + l1_weighted
-                running_l1_loss += l1_weighted.detach().float()
+                if global_step >= sparse_start_step:
+                    l1_lambda = float(sparse_cfg.get("l1_lambda", 0.0))
+                    l1_loss = compute_l1_loss(base_model, layer_weights=layer_weights)
+                    l1_weighted = l1_lambda * l1_loss
+                    loss = loss + l1_weighted
+                    running_l1_loss += l1_weighted.detach().float()
 
             accelerator.backward(loss)
             optimizer.step()
@@ -175,6 +191,19 @@ def main():
         else:
             accelerator.print(f"  Train loss: {avg_train_loss:.4f}")
 
+        # Apply pruning at the designated epoch
+        if is_sparse_lora and sparse_cfg["method"] == "prune":
+            if epoch + 1 == prune_at_epoch and pruning_masks is None:
+                accelerator.print(f"\n=== Applying Magnitude Pruning at Epoch {epoch + 1} ===")
+                unwrapped = accelerator.unwrap_model(base_model)
+                pruning_masks = apply_magnitude_pruning(
+                    unwrapped,
+                    prune_ratio=sparse_cfg["prune_ratio"],
+                    device=device
+                )
+                apply_pruning_masks(base_model, pruning_masks)
+                accelerator.print(f"Pruning applied. Will fine-tune for {cfg['epochs'] - prune_at_epoch} more epoch(s)\n")
+
         # Log sparsity statistics
         if is_sparse_lora:
             stats = get_sparsity_stats(base_model)
@@ -193,25 +222,6 @@ def main():
             unwrapped = accelerator.unwrap_model(base_model)
             save_checkpoint(unwrapped, output_dir)
 
-    # Apply final pruning if using Sparse LoRA with prune method
-    if is_sparse_lora and sparse_cfg["method"] == "prune":
-        accelerator.print("\n=== Applying Final Magnitude Pruning ===")
-        unwrapped_final = accelerator.unwrap_model(base_model)
-        pruning_masks = apply_magnitude_pruning(
-            unwrapped_final,
-            prune_ratio=sparse_cfg["prune_ratio"],
-            device=device
-        )
-
-        # Save final sparsity stats
-        final_stats = get_sparsity_stats(unwrapped_final)
-        accelerator.print(f"Final Sparsity: {final_stats['sparsity_ratio']:.2%}")
-        accelerator.print(f"Nonzero params: {final_stats['nonzero_params']:,} / {final_stats['total_lora_params']:,}")
-
-        # Save pruned model
-        accelerator.wait_for_everyone()
-        save_checkpoint(unwrapped_final, output_dir)
-        accelerator.print("Pruned model saved.\n")
 
     avg_step_time = float(sum(step_times) / max(1, len(step_times)))
     metrics_payload = {
