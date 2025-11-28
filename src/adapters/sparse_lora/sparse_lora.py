@@ -4,11 +4,30 @@ from peft import LoraConfig, get_peft_model
 from typing import Dict, Any, Optional
 
 
-def compute_l1_loss(model):
+def compute_l1_loss(model, layer_weights: Optional[Dict[str, float]] = None):
+    """
+    Compute L1 loss for LoRA parameters with optional layer-wise weighting.
+
+    Args:
+        model: The model with LoRA parameters
+        layer_weights: Optional dict mapping layer patterns to weight multipliers.
+                      E.g., {"layer.0": 0.5, "layer.1": 0.5, "layer.2": 1.0}
+                      Lower multiplier = less sparsity pressure
+    """
     l1_loss = torch.tensor(0.0, device=next(model.parameters()).device)
+
     for name, param in model.named_parameters():
-        if "lora_" in name and param.requires_grad: # # Only apply L1 to LoRA parameters
-            l1_loss += torch.abs(param).sum()
+        if "lora_" in name and param.requires_grad:
+            # Determine layer-specific weight
+            weight = 1.0
+            if layer_weights:
+                for pattern, w in layer_weights.items():
+                    if pattern in name:
+                        weight = w
+                        break
+
+            l1_loss += weight * torch.abs(param).sum()
+
     return l1_loss
 
 def apply_magnitude_pruning(

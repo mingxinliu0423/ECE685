@@ -17,23 +17,23 @@ speed-sst2:
 
 # ========== Sparse LoRA (L1) ==========
 train-sparse-l1:
-	python -m src.train --config configs/sst2_sparse_lora_l1_test.yaml
+	python -m src.train --config configs/sst2_sparse_lora_l1.yaml
 
 eval-sparse-l1:
-	python -m src.eval --config configs/sst2_sparse_lora_l1_test.yaml
+	python -m src.eval --config configs/sst2_sparse_lora_l1.yaml
 
 speed-sparse-l1:
-	python -m src.infer_speed --config configs/sst2_sparse_lora_l1_test.yaml
+	python -m src.infer_speed --config configs/sst2_sparse_lora_l1.yaml
 
-# ========== Sparse LoRA (prune) ==========
+# ========== Sparse LoRA (Prune) ==========
 train-sparse-prune:
-	python -m src.train --config configs/sst2_sparse_lora_prune_test.yaml
+	python -m src.train --config configs/sst2_sparse_lora_prune.yaml
 
 eval-sparse-prune:
-	python -m src.eval --config configs/sst2_sparse_lora_prune_test.yaml
+	python -m src.eval --config configs/sst2_sparse_lora_prune.yaml
 
 speed-sparse-prune:
-	python -m src.infer_speed --config configs/sst2_sparse_lora_prune_test.yaml
+	python -m src.infer_speed --config configs/sst2_sparse_lora_prune.yaml
 
 # ========== Train All ==========
 train-all:
