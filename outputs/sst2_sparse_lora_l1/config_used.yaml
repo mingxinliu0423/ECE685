@@ -4,21 +4,22 @@ fp16: true
 lr: 2e-4
 max_seq_len: 128
 model_name: distilbert-base-uncased
-output_dir: outputs/sst2_sparse_lora_prune
+output_dir: outputs/sst2_sparse_lora_l1
 save_every_epochs: 3
 seed: 685
 sparse_lora:
   alpha: 16
   dropout: 0.05
-  l1_lambda: 0.0
-  method: prune
-  prune_ratio: 0.5
+  l1_lambda: 1e-3
+  method: l1
+  prune_ratio: 0.0
   r: 8
   target_modules:
   - q_lin
   - k_lin
   - v_lin
   - out_lin
+sparse_warmup_ratio: 0.1
 task_name: sst2
 train_batch_size: 16
 warmup_ratio: 0.06

@@ -4,5 +4,5 @@
   "loss": 0.26747509837150574,
   "best_epoch": 2,
   "max_allocated_vram_mb": 1100.57763671875,
-  "avg_step_time_ms": 77.89296517745899
+  "avg_step_time_ms": 78.24078039432082
 }

@@ -25,8 +25,8 @@
   "target_modules": [
     "out_lin",
     "q_lin",
-    "v_lin",
-    "k_lin"
+    "k_lin",
+    "v_lin"
   ],
   "task_type": "SEQ_CLS",
   "use_dora": false,
