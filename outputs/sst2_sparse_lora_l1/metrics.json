@@ -1,0 +1,13 @@
+{
+  "val_acc": 0.8692660550458715,
+  "val_f1": 0.8707482993197279,
+  "loss": 0.2948053479194641,
+  "best_epoch": 3,
+  "max_allocated_vram_mb": 833.83251953125,
+  "avg_step_time_ms": 86.96109331135511,
+  "sparse_method": "l1",
+  "final_sparsity": 0.23545667860243055,
+  "nonzero_params": 225473,
+  "total_lora_params": 294912,
+  "l1_lambda": "1e-3"
+}

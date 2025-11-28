@@ -2,7 +2,7 @@ from transformers import AutoModelForSequenceClassification
 
 from . import utils
 from .adapters import build_lora_adapter
-
+from .adapters.sparse_lora.sparse_lora import build_sparse_lora_adapter
 
 def create_model(config):
     try:
@@ -14,5 +14,11 @@ def create_model(config):
         raise RuntimeError(
             "Model download failed. Place model files per models/README.md."
         ) from err
-    model = build_lora_adapter(model, config)
+    
+    if "sparse_lora" in config:
+        model = build_sparse_lora_adapter(model, config)
+    elif "lora" in config:
+        model = build_lora_adapter(model, config)
+
+
     return model

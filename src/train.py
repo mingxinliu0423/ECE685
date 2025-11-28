@@ -10,6 +10,12 @@ from tqdm.auto import tqdm
 from transformers import get_linear_schedule_with_warmup
 
 from . import data, model, utils
+from .adapters.sparse_lora.sparse_lora import (
+    compute_l1_loss,
+    get_sparsity_stats,
+    apply_magnitude_pruning,
+    apply_pruning_masks,
+)
 
 
 def parse_args():
@@ -112,25 +118,97 @@ def main():
 
     save_freq = max(1, cfg.get("save_every_epochs", cfg["epochs"]))
 
+    # Check if using Sparse LoRA
+    unwrapped_model = accelerator.unwrap_model(base_model)
+    is_sparse_lora = hasattr(unwrapped_model, "sparse_config")
+    pruning_masks = None
+
+    # Training schedule for sparse methods
+    sparse_warmup_ratio = cfg.get("sparse_warmup_ratio", 0.0)
+    sparse_start_step = int(total_training_steps * sparse_warmup_ratio)
+    prune_at_epoch = -1  
+
+    # Layer-wise L1 weights (for non-uniform sparsity)
+    layer_weights = cfg.get("layer_l1_weights", None)
+
+    if is_sparse_lora:
+        sparse_cfg = unwrapped_model.sparse_config
+        accelerator.print(f"\n=== Sparse LoRA Configuration ===")
+        accelerator.print(f"  Method: {sparse_cfg['method']}")
+        if sparse_cfg["method"] == "l1":
+            accelerator.print(f"  L1 lambda: {sparse_cfg['l1_lambda']}")
+            if sparse_warmup_ratio > 0:
+                accelerator.print(f"  Sparse warmup: first {sparse_warmup_ratio:.1%} steps are dense")
+                accelerator.print(f"  Sparse training starts at step {sparse_start_step}/{total_training_steps}")
+            if layer_weights:
+                accelerator.print(f"  Layer-wise L1 weights: {layer_weights}")
+        else:
+            accelerator.print(f"  Prune ratio: {sparse_cfg['prune_ratio']:.1%}")
+            # Prune at the second-to-last epoch, then fine-tune in the last epoch
+            prune_at_epoch = max(1, cfg["epochs"] - 1)
+            accelerator.print(f"  Will prune at epoch {prune_at_epoch}, then fine-tune")
+
     for epoch in range(cfg["epochs"]):
         accelerator.print(f"Epoch {epoch + 1}/{cfg['epochs']}")
         base_model.train()
         running_loss = 0.0
+        running_l1_loss = 0.0
         progress_bar = tqdm(total=len(train_loader), desc=f"Epoch {epoch + 1}", disable=not accelerator.is_local_main_process)
         for batch in train_loader:
             global_step += 1
             step_start = time.time()
             outputs = base_model(**batch)
             loss = outputs.loss
+
+            # Add L1 regularization for Sparse LoRA after warmup
+            if is_sparse_lora and sparse_cfg["method"] == "l1":
+                if global_step >= sparse_start_step:
+                    l1_lambda = float(sparse_cfg.get("l1_lambda", 0.0))
+                    l1_loss = compute_l1_loss(base_model, layer_weights=layer_weights)
+                    l1_weighted = l1_lambda * l1_loss
+                    loss = loss + l1_weighted
+                    running_l1_loss += l1_weighted.detach().float()
+
             accelerator.backward(loss)
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+
+            # Apply pruning masks if using prune method
+            if is_sparse_lora and sparse_cfg["method"] == "prune" and pruning_masks is not None:
+                apply_pruning_masks(base_model, pruning_masks)
+
             running_loss += loss.detach().float()
             step_times.append((time.time() - step_start) * 1000.0)
             progress_bar.update(1)
         progress_bar.close()
-        accelerator.print(f"  Train loss: {float(running_loss / max(1, len(train_loader))):.4f}")
+
+        # Print training loss
+        avg_train_loss = float(running_loss / max(1, len(train_loader)))
+        if is_sparse_lora and sparse_cfg["method"] == "l1":
+            avg_l1_loss = float(running_l1_loss / max(1, len(train_loader)))
+            accelerator.print(f"  Train loss: {avg_train_loss:.4f} (L1 loss: {avg_l1_loss:.6f})")
+        else:
+            accelerator.print(f"  Train loss: {avg_train_loss:.4f}")
+
+        # Apply pruning at the designated epoch
+        if is_sparse_lora and sparse_cfg["method"] == "prune":
+            if epoch + 1 == prune_at_epoch and pruning_masks is None:
+                accelerator.print(f"\n=== Applying Magnitude Pruning at Epoch {epoch + 1} ===")
+                unwrapped = accelerator.unwrap_model(base_model)
+                pruning_masks = apply_magnitude_pruning(
+                    unwrapped,
+                    prune_ratio=sparse_cfg["prune_ratio"],
+                    device=device
+                )
+                apply_pruning_masks(base_model, pruning_masks)
+                accelerator.print(f"Pruning applied. Will fine-tune for {cfg['epochs'] - prune_at_epoch} more epoch(s)\n")
+
+        # Log sparsity statistics
+        if is_sparse_lora:
+            stats = get_sparsity_stats(base_model)
+            accelerator.print(f"  Sparsity: {stats['sparsity_ratio']:.2%} | Nonzero params: {stats['nonzero_params']:,}")
+
         metrics = evaluate(accelerator, base_model, val_loader)
         accelerator.print(
             f"  Val acc: {metrics['accuracy']:.4f} | Val f1: {metrics['f1']:.4f} | Loss: {metrics['loss']:.4f}"
@@ -144,6 +222,7 @@ def main():
             unwrapped = accelerator.unwrap_model(base_model)
             save_checkpoint(unwrapped, output_dir)
 
+
     avg_step_time = float(sum(step_times) / max(1, len(step_times)))
     metrics_payload = {
         "val_acc": best_metrics["accuracy"],
@@ -153,6 +232,21 @@ def main():
         "max_allocated_vram_mb": utils.get_max_vram_mb(),
         "avg_step_time_ms": avg_step_time,
     }
+
+    # Add sparsity metrics if using Sparse LoRA
+    if is_sparse_lora:
+        final_stats = get_sparsity_stats(accelerator.unwrap_model(base_model))
+        metrics_payload.update({
+            "sparse_method": sparse_cfg["method"],
+            "final_sparsity": final_stats["sparsity_ratio"],
+            "nonzero_params": final_stats["nonzero_params"],
+            "total_lora_params": final_stats["total_lora_params"],
+        })
+        if sparse_cfg["method"] == "l1":
+            metrics_payload["l1_lambda"] = sparse_cfg["l1_lambda"]
+        else:
+            metrics_payload["prune_ratio"] = sparse_cfg["prune_ratio"]
+
     utils.write_json(metrics_payload, str(output_dir / "metrics.json"))
     accelerator.print(f"Metrics saved to {output_dir / 'metrics.json'}")
 

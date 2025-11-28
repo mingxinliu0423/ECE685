@@ -18,10 +18,20 @@ venv/
 # Data and outputs
 data/
 datasets/
-outputs/
 runs/
 wandb/
 logs/
+
+# Outputs directory - keep metrics but exclude model weights
+outputs/
+!outputs/
+!outputs/*/
+!outputs/*/metrics.json         
+!outputs/*/eval_results.txt      
+!outputs/*/speed_benchmark.txt  
+!outputs/*/training_log.txt     
+!outputs/*/*.yaml                
+!outputs/*/*.json               
 
 # Model checkpoints and large binaries
 *.pt
@@ -31,8 +41,15 @@ logs/
 *.ckpt
 *.tar
 *.zip
+# keep metadata files
+!**/config.json                 
+!**/adapter_config.json         
 
 # OS/editor
 .DS_Store
 Thumbs.db
 .vscode/
+
+
+sparse_lora.pdf
+todo.md
