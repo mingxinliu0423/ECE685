@@ -95,3 +95,81 @@ def get_sst2_splits(model_name: str, max_len: int, batch_train: int, batch_eval:
     dl_train = DataLoader(ds["train"], batch_size=batch_train, shuffle=True)
     dl_val = DataLoader(ds["validation"], batch_size=batch_eval)
     return dl_train, dl_val, tokenizer
+
+
+def _load_imdb_dataset() -> DatasetDict:
+    try:
+        return load_dataset("imdb")
+    except Exception as err:
+        raise RuntimeError("IMDB dataset download failed.") from err
+
+
+def _tokenize_imdb_dataset(ds: DatasetDict, model_name: str, max_len: int):
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    except Exception as err:
+        utils.ensure_models_readme()
+        raise RuntimeError(
+            "Tokenizer download failed. Place model files under models/ per models/README.md"
+        ) from err
+
+    def _encode(batch):
+        return tokenizer(
+            batch["text"],
+            truncation=True,
+            padding="max_length",
+            max_length=max_len,
+        )
+
+    ds = ds.map(_encode, batched=True, desc="Tokenizing")
+    if "label" in ds["train"].column_names:
+        ds = ds.rename_column("label", "labels")
+    columns = ["input_ids", "attention_mask", "labels"]
+    ds.set_format(type="torch", columns=columns)
+    return ds, tokenizer
+
+
+def get_imdb_splits(model_name: str, max_len: int, batch_train: int, batch_eval: int) -> Tuple[DataLoader, DataLoader, AutoTokenizer]:
+    ds = _load_imdb_dataset()
+    ds, tokenizer = _tokenize_imdb_dataset(ds, model_name, max_len)
+    dl_train = DataLoader(ds["train"], batch_size=batch_train, shuffle=True)
+    dl_val = DataLoader(ds["test"], batch_size=batch_eval)
+    return dl_train, dl_val, tokenizer
+
+
+def _load_wikitext2_dataset() -> DatasetDict:
+    try:
+        return load_dataset("wikitext", "wikitext-2-raw-v1")
+    except Exception as err:
+        raise RuntimeError("WikiText-2 dataset download failed.") from err
+
+
+def _tokenize_wikitext2_dataset(ds: DatasetDict, model_name: str, max_len: int):
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    except Exception as err:
+        utils.ensure_models_readme()
+        raise RuntimeError(
+            "Tokenizer download failed. Place model files under models/ per models/README.md"
+        ) from err
+
+    def _encode(batch):
+        return tokenizer(
+            batch["text"],
+            truncation=True,
+            padding="max_length",
+            max_length=max_len,
+        )
+
+    ds = ds.map(_encode, batched=True, desc="Tokenizing")
+    columns = ["input_ids", "attention_mask"]
+    ds.set_format(type="torch", columns=columns)
+    return ds, tokenizer
+
+
+def get_wikitext2_splits(model_name: str, max_len: int, batch_train: int, batch_eval: int) -> Tuple[DataLoader, DataLoader, AutoTokenizer]:
+    ds = _load_wikitext2_dataset()
+    ds, tokenizer = _tokenize_wikitext2_dataset(ds, model_name, max_len)
+    dl_train = DataLoader(ds["train"], batch_size=batch_train, shuffle=True)
+    dl_val = DataLoader(ds["validation"], batch_size=batch_eval)
+    return dl_train, dl_val, tokenizer

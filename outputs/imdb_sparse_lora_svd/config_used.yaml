@@ -1,0 +1,33 @@
+epochs: 3
+eval_batch_size: 32
+fp16: true
+lr: 2e-4
+max_seq_len: 128
+model_name: distilbert-base-uncased
+output_dir: outputs/imdb_sparse_lora_svd
+save_every_epochs: 3
+seed: 685
+sparse_lora:
+  alpha: 16
+  dropout: 0.05
+  ffn_sparsity: 0.75
+  layer_sparsity:
+    layer.0: 0.4
+    layer.1: 0.5
+    layer.2: 0.6
+    layer.3: 0.8
+    layer.4: 0.9
+    layer.5: 0.95
+  method: svd
+  r: 8
+  svd_rank: 4
+  target_modules:
+  - q_lin
+  - k_lin
+  - v_lin
+  - out_lin
+sparse_warmup_ratio: 0.2
+task_name: imdb
+train_batch_size: 16
+warmup_ratio: 0.06
+weight_decay: 0.01

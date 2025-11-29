@@ -31,9 +31,23 @@ def main():
     args = parse_args()
     cfg = utils.load_config(args.config)
     utils.set_seed(cfg.get("seed", 42))
-    _, val_loader, _ = data.get_sst2_splits(
-        cfg["model_name"], cfg["max_seq_len"], cfg["train_batch_size"], cfg["eval_batch_size"]
-    )
+
+    task = cfg.get("task_name", "sst2").lower()
+    if task == "sst2":
+        _, val_loader, _ = data.get_sst2_splits(
+            cfg["model_name"], cfg["max_seq_len"], cfg["train_batch_size"], cfg["eval_batch_size"]
+        )
+    elif task == "imdb":
+        _, val_loader, _ = data.get_imdb_splits(
+            cfg["model_name"], cfg["max_seq_len"], cfg["train_batch_size"], cfg["eval_batch_size"]
+        )
+    elif task == "wikitext2":
+        _, val_loader, _ = data.get_wikitext2_splits(
+            cfg["model_name"], cfg["max_seq_len"], cfg["train_batch_size"], cfg["eval_batch_size"]
+        )
+    else:
+        raise NotImplementedError(f"Task {task} is not implemented in this baseline.")
+
     model = load_model(cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)

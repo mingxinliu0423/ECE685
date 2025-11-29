@@ -50,14 +50,29 @@ def evaluate(accelerator, model, dataloader):
 
 def get_dataloaders(cfg):
     task = cfg.get("task_name", "sst2").lower()
-    if task != "sst2":
+    if task == "sst2":
+        return data.get_sst2_splits(
+            cfg["model_name"],
+            cfg["max_seq_len"],
+            cfg["train_batch_size"],
+            cfg["eval_batch_size"],
+        )
+    elif task == "imdb":
+        return data.get_imdb_splits(
+            cfg["model_name"],
+            cfg["max_seq_len"],
+            cfg["train_batch_size"],
+            cfg["eval_batch_size"],
+        )
+    elif task == "wikitext2":
+        return data.get_wikitext2_splits(
+            cfg["model_name"],
+            cfg["max_seq_len"],
+            cfg["train_batch_size"],
+            cfg["eval_batch_size"],
+        )
+    else:
         raise NotImplementedError(f"Task {task} is not implemented in this baseline.")
-    return data.get_sst2_splits(
-        cfg["model_name"],
-        cfg["max_seq_len"],
-        cfg["train_batch_size"],
-        cfg["eval_batch_size"],
-    )
 
 
 def save_checkpoint(unwrapped_model, output_dir: Path):

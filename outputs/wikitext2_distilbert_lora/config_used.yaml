@@ -1,0 +1,22 @@
+epochs: 2
+eval_batch_size: 32
+fp16: true
+lora:
+  alpha: 16
+  dropout: 0.05
+  r: 8
+  target_modules:
+  - q_lin
+  - k_lin
+  - v_lin
+  - out_lin
+lr: 2e-4
+max_seq_len: 128
+model_name: distilbert-base-uncased
+output_dir: outputs/wikitext2_distilbert_lora
+save_every_epochs: 1
+seed: 685
+task_name: wikitext2
+train_batch_size: 16
+warmup_ratio: 0.06
+weight_decay: 0.01

@@ -1,0 +1,15 @@
+{
+  "val_acc": 0.84992,
+  "val_f1": 0.8460275771503611,
+  "loss": 0.485527902841568,
+  "best_epoch": 2,
+  "max_allocated_vram_mb": 846.12548828125,
+  "avg_step_time_ms": 90.64784464894086,
+  "sparse_method": "svd",
+  "final_sparsity": 3.3908420138888887e-06,
+  "nonzero_params": 294911,
+  "total_lora_params": 294912,
+  "svd_rank": 4,
+  "ffn_sparsity": 0.75,
+  "num_ffn_estimators": 6
+}
