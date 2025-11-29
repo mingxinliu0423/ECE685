@@ -15,6 +15,9 @@ from .adapters.sparse_lora.sparse_lora import (
     get_sparsity_stats,
     apply_magnitude_pruning,
     apply_pruning_masks,
+    build_svd_estimators_for_model,
+    apply_sparse_ffn_to_model,
+    get_sparsity_statistics,
 )
 
 
@@ -122,11 +125,12 @@ def main():
     unwrapped_model = accelerator.unwrap_model(base_model)
     is_sparse_lora = hasattr(unwrapped_model, "sparse_config")
     pruning_masks = None
+    svd_estimators = None
 
     # Training schedule for sparse methods
     sparse_warmup_ratio = cfg.get("sparse_warmup_ratio", 0.0)
     sparse_start_step = int(total_training_steps * sparse_warmup_ratio)
-    prune_at_epoch = -1  
+    prune_at_epoch = -1
 
     # Layer-wise L1 weights (for non-uniform sparsity)
     layer_weights = cfg.get("layer_l1_weights", None)
@@ -142,11 +146,33 @@ def main():
                 accelerator.print(f"  Sparse training starts at step {sparse_start_step}/{total_training_steps}")
             if layer_weights:
                 accelerator.print(f"  Layer-wise L1 weights: {layer_weights}")
-        else:
+        elif sparse_cfg["method"] == "prune":
             accelerator.print(f"  Prune ratio: {sparse_cfg['prune_ratio']:.1%}")
             # Prune at the second-to-last epoch, then fine-tune in the last epoch
             prune_at_epoch = max(1, cfg["epochs"] - 1)
             accelerator.print(f"  Will prune at epoch {prune_at_epoch}, then fine-tune")
+        elif sparse_cfg["method"] == "svd":
+            accelerator.print(f"  SVD rank: {sparse_cfg['svd_rank']}")
+            accelerator.print(f"  FFN sparsity: {sparse_cfg['ffn_sparsity']:.1%}")
+            if sparse_warmup_ratio > 0:
+                accelerator.print(f"  Sparse warmup: first {sparse_warmup_ratio:.1%} steps are dense")
+                accelerator.print(f"  Sparse training starts at step {sparse_start_step}/{total_training_steps}")
+            if sparse_cfg.get('layer_sparsity'):
+                accelerator.print(f"  Layer-wise sparsity configured")
+
+            # Build SVD estimators (only on main process to avoid duplication)
+            if accelerator.is_main_process:
+                svd_estimators = build_svd_estimators_for_model(unwrapped_model, cfg)
+
+                # Apply sparse FFN modules to the model
+                if svd_estimators:
+                    apply_sparse_ffn_to_model(
+                        unwrapped_model,
+                        svd_estimators,
+                        cfg,
+                        total_training_steps
+                    )
+            accelerator.wait_for_everyone()
 
     for epoch in range(cfg["epochs"]):
         accelerator.print(f"Epoch {epoch + 1}/{cfg['epochs']}")
@@ -206,8 +232,18 @@ def main():
 
         # Log sparsity statistics
         if is_sparse_lora:
-            stats = get_sparsity_stats(base_model)
-            accelerator.print(f"  Sparsity: {stats['sparsity_ratio']:.2%} | Nonzero params: {stats['nonzero_params']:,}")
+            if sparse_cfg["method"] == "svd":
+                # For SVD, log sparse FFN statistics
+                sparse_stats = get_sparsity_statistics(base_model)
+                if sparse_stats["total_sparse_ffn"] > 0:
+                    accelerator.print(
+                        f"  Sparse FFN: {sparse_stats['active_sparse_ffn']}/{sparse_stats['total_sparse_ffn']} active | "
+                        f"Avg sparsity: {sparse_stats['avg_sparsity']:.1%}"
+                    )
+            else:
+                # For L1/Prune, log parameter sparsity
+                stats = get_sparsity_stats(base_model)
+                accelerator.print(f"  Sparsity: {stats['sparsity_ratio']:.2%} | Nonzero params: {stats['nonzero_params']:,}")
 
         metrics = evaluate(accelerator, base_model, val_loader)
         accelerator.print(
@@ -244,8 +280,13 @@ def main():
         })
         if sparse_cfg["method"] == "l1":
             metrics_payload["l1_lambda"] = sparse_cfg["l1_lambda"]
-        else:
+        elif sparse_cfg["method"] == "prune":
             metrics_payload["prune_ratio"] = sparse_cfg["prune_ratio"]
+        elif sparse_cfg["method"] == "svd":
+            metrics_payload["svd_rank"] = sparse_cfg["svd_rank"]
+            metrics_payload["ffn_sparsity"] = sparse_cfg["ffn_sparsity"]
+            if svd_estimators:
+                metrics_payload["num_ffn_estimators"] = len(svd_estimators.get("ffn", {}))
 
     utils.write_json(metrics_payload, str(output_dir / "metrics.json"))
     accelerator.print(f"Metrics saved to {output_dir / 'metrics.json'}")

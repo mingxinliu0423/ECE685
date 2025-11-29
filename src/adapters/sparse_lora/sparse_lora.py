@@ -3,6 +3,10 @@ import torch.nn as nn
 from peft import LoraConfig, get_peft_model
 from typing import Dict, Any, Optional
 
+from .svd_estimator import build_ffn_estimators, FFNEstimator
+from .sparsity_selector import select_ffn_channels, get_layer_sparsity_ratio
+from .sparse_ffn_module import replace_ffn_with_sparse, get_sparsity_statistics
+
 
 def compute_l1_loss(model, layer_weights: Optional[Dict[str, float]] = None):
     """
@@ -115,7 +119,104 @@ def apply_pruning_masks(model, masks: Dict[str, torch.Tensor]) -> None:
             param.data *= masks[name]
 
 
+def apply_sparse_ffn_to_model(
+    model,
+    estimators: dict,
+    cfg: Dict[str, Any],
+    total_training_steps: int
+) -> int:
+    """
+    Apply sparse FFN modules to the model.
+
+    Args:
+        model: The PEFT model
+        estimators: SVD estimators dictionary
+        cfg: Configuration dictionary
+        total_training_steps: Total number of training steps
+
+    Returns:
+        Number of FFN layers replaced
+    """
+    s = cfg.get("sparse_lora", {})
+
+    if s.get("method") != "svd" or estimators is None:
+        return 0
+
+    # Calculate warmup steps
+    sparse_warmup_ratio = cfg.get("sparse_warmup_ratio", 0.0)
+    sparse_warmup_steps = int(total_training_steps * sparse_warmup_ratio)
+
+    # Get base model
+    base_model = model
+    if hasattr(model, 'base_model'):
+        base_model = model.base_model
+        if hasattr(base_model, 'model'):
+            base_model = base_model.model
+
+    print(f"\nApplying sparse FFN modules...")
+    print(f"  Sparsity warmup: {sparse_warmup_steps} steps")
+    print(f"  Default FFN sparsity: {s.get('ffn_sparsity', 0.5):.1%}")
+
+    # Replace FFN modules
+    replaced = replace_ffn_with_sparse(
+        base_model,
+        estimators,
+        sparsity_ratio=s.get("ffn_sparsity", 0.5),
+        sparse_warmup_steps=sparse_warmup_steps,
+        layer_sparsity_config=s.get("layer_sparsity"),
+    )
+
+    print(f"  Replaced {replaced} FFN modules")
+
+    return replaced
+
+
+def build_svd_estimators_for_model(model, cfg: Dict[str, Any]) -> Optional[Dict]:
+    """
+    Build SVD estimators for the model (paper method).
+
+    Args:
+        model: The model to build estimators for (can be PEFT model)
+        cfg: Configuration dictionary
+
+    Returns:
+        Dictionary containing SVD estimators, or None if not using SVD method
+    """
+    s = cfg.get("sparse_lora", {})
+
+    if s.get("method") != "svd":
+        return None
+
+    rank = s.get("svd_rank", 8)
+    print(f"\nBuilding SVD estimators (rank={rank})...")
+
+    # If this is a PEFT model, get the base model
+    base_model = model
+    if hasattr(model, 'base_model'):
+        base_model = model.base_model
+        if hasattr(base_model, 'model'):  # PeftModelForSequenceClassification
+            base_model = base_model.model
+
+    # Build FFN estimators
+    ffn_estimators = build_ffn_estimators(base_model, rank=rank)
+
+    print(f"  Built {len(ffn_estimators)} FFN estimators")
+
+    return {
+        "ffn": ffn_estimators,
+        "rank": rank,
+    }
+
+
 def build_sparse_lora_adapter(model, cfg: Dict[str, Any]):
+    """
+    Build Sparse LoRA adapter.
+
+    Supports three methods:
+    - "l1": L1 regularization on LoRA parameters (your original method)
+    - "prune": Magnitude pruning on LoRA parameters (your original method)
+    - "svd": SVD estimator with FFN channel sparsity (paper method)
+    """
     s = cfg["sparse_lora"]
 
     peft_config = LoraConfig(
@@ -134,14 +235,22 @@ def build_sparse_lora_adapter(model, cfg: Dict[str, Any]):
         "method": s["method"],
         "l1_lambda": s.get("l1_lambda", 0.0),
         "prune_ratio": s.get("prune_ratio", 0.0),
+        "svd_rank": s.get("svd_rank", 8),
+        "ffn_sparsity": s.get("ffn_sparsity", 0.5),
+        "layer_sparsity": s.get("layer_sparsity", None),
     }
 
     print(f"Created Sparse LoRA adapter:")
     print(f"  Method: {s['method']}")
     if s["method"] == "l1":
         print(f"  L1 lambda: {s.get('l1_lambda', 0.0)}")
-    else:
+    elif s["method"] == "prune":
         print(f"  Prune ratio: {s.get('prune_ratio', 0.0):.1%}")
+    elif s["method"] == "svd":
+        print(f"  SVD rank: {s.get('svd_rank', 8)}")
+        print(f"  FFN sparsity: {s.get('ffn_sparsity', 0.5):.1%}")
+        if s.get("layer_sparsity"):
+            print(f"  Layer-wise sparsity: {s.get('layer_sparsity')}")
     print(f"  LoRA rank: {s['r']}")
     print(f"  Target modules: {s['target_modules']}")
 
