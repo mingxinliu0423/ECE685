@@ -43,7 +43,8 @@ outputs/
 *.zip
 # keep metadata files
 !**/config.json                 
-!**/adapter_config.json         
+!**/adapter_config.json
+models/
 
 # OS/editor
 .DS_Store
