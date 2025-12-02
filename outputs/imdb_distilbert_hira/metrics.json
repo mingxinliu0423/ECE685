@@ -1,0 +1,15 @@
+{
+  "val_acc": 0.87328,
+  "val_f1": 0.8748716328303974,
+  "loss": 0.30457739108968573,
+  "best_epoch": 3,
+  "max_allocated_vram_mb": 1519.53564453125,
+  "avg_step_time_ms": 79.10651046092333,
+  "adapter_type": "hira",
+  "hira_rank": 4,
+  "hira_alpha": 8,
+  "final_sparsity": 0.0,
+  "nonzero_params": 147456,
+  "total_hira_params": 147456,
+  "num_hira_layers": 24
+}

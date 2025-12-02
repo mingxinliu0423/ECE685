@@ -1,0 +1,21 @@
+seed: 685
+model_name: distilbert-base-uncased
+task_name: imdb
+max_seq_len: 128
+train_batch_size: 16
+eval_batch_size: 32
+epochs: 3
+lr: 1e-5
+weight_decay: 0.02
+warmup_ratio: 0.06
+fp16: true
+output_dir: outputs/imdb_distilbert_hira
+save_every_epochs: 1
+hira:
+  r: 4
+  alpha: 8
+  dropout: 0.05
+  target_modules: ["q_lin","k_lin","v_lin","out_lin"]
+  l1_lambda: 0.0
+  prune_ratio: 0.0
+

@@ -3,24 +3,27 @@
         train-sst2-l1 eval-sst2-l1 speed-sst2-l1 \
         train-sst2-prune eval-sst2-prune speed-sst2-prune \
         train-sst2-svd eval-sst2-svd speed-sst2-svd \
+        train-sst2-hira eval-sst2-hira speed-sst2-hira \
         train-imdb-lora eval-imdb-lora speed-imdb-lora \
         train-imdb-l1 eval-imdb-l1 speed-imdb-l1 \
         train-imdb-prune eval-imdb-prune speed-imdb-prune \
         train-imdb-svd eval-imdb-svd speed-imdb-svd \
+        train-imdb-hira eval-imdb-hira speed-imdb-hira \
         train-wikitext2-lora eval-wikitext2-lora speed-wikitext2-lora \
         train-wikitext2-l1 eval-wikitext2-l1 speed-wikitext2-l1 \
         train-wikitext2-prune eval-wikitext2-prune speed-wikitext2-prune \
         train-wikitext2-svd eval-wikitext2-svd speed-wikitext2-svd \
+        train-wikitext2-hira eval-wikitext2-hira speed-wikitext2-hira \
         train-sst2-all eval-sst2-all speed-sst2-all \
         train-imdb-all eval-imdb-all speed-imdb-all \
         train-wikitext2-all eval-wikitext2-all speed-wikitext2-all \
         train-all eval-all speed-all
 
 setup:
-	python -m pip install -r requirements.txt
+	python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu116
 
 # ========================================
-# SST-2 Dataset (4 methods)
+# SST-2 Dataset (5 methods)
 # ========================================
 
 # SST-2 - LoRA
@@ -63,8 +66,18 @@ eval-sst2-svd:
 speed-sst2-svd:
 	python -m src.infer_speed --config configs/sst2_sparse_lora_svd.yaml
 
+# SST-2 - HIRA
+train-sst2-hira:
+	python -m src.train --config configs/sst2_distilbert_hira.yaml
+
+eval-sst2-hira:
+	python -m src.eval --config configs/sst2_distilbert_hira.yaml
+
+speed-sst2-hira:
+	python -m src.infer_speed --config configs/sst2_distilbert_hira.yaml
+
 # ========================================
-# IMDB Dataset (4 methods)
+# IMDB Dataset (5 methods)
 # ========================================
 
 # IMDB - LoRA
@@ -107,8 +120,18 @@ eval-imdb-svd:
 speed-imdb-svd:
 	python -m src.infer_speed --config configs/imdb_sparse_lora_svd.yaml
 
+# IMDB - HIRA
+train-imdb-hira:
+	python -m src.train --config configs/imdb_distilbert_hira.yaml
+
+eval-imdb-hira:
+	python -m src.eval --config configs/imdb_distilbert_hira.yaml
+
+speed-imdb-hira:
+	python -m src.infer_speed --config configs/imdb_distilbert_hira.yaml
+
 # ========================================
-# WikiText2 Dataset (4 methods)
+# WikiText2 Dataset (5 methods)
 # ========================================
 
 # WikiText2 - LoRA
@@ -151,44 +174,60 @@ eval-wikitext2-svd:
 speed-wikitext2-svd:
 	python -m src.infer_speed --config configs/wikitext2_sparse_lora_svd.yaml
 
+# WikiText2 - HIRA
+train-wikitext2-hira:
+	python -m src.train --config configs/wikitext2_distilbert_hira.yaml
+
+eval-wikitext2-hira:
+	python -m src.eval --config configs/wikitext2_distilbert_hira.yaml
+
+speed-wikitext2-hira:
+	python -m src.infer_speed --config configs/wikitext2_distilbert_hira.yaml
+
 # ========================================
 # Batch Operations - SST-2
 # ========================================
 
 train-sst2-all:
-	@echo "=== Training all SST-2 models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] SST-2 LoRA..."
+	@echo "=== Training all SST-2 models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] SST-2 LoRA..."
 	$(MAKE) train-sst2-lora
-	@echo "[2/4] SST-2 Sparse L1..."
+	@echo "[2/5] SST-2 Sparse L1..."
 	$(MAKE) train-sst2-l1
-	@echo "[3/4] SST-2 Sparse Prune..."
+	@echo "[3/5] SST-2 Sparse Prune..."
 	$(MAKE) train-sst2-prune
-	@echo "[4/4] SST-2 Sparse SVD..."
+	@echo "[4/5] SST-2 Sparse SVD..."
 	$(MAKE) train-sst2-svd
+	@echo "[5/5] SST-2 HIRA..."
+	$(MAKE) train-sst2-hira
 	@echo "=== SST-2 training complete! ==="
 
 eval-sst2-all:
-	@echo "=== Evaluating all SST-2 models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] SST-2 LoRA..."
+	@echo "=== Evaluating all SST-2 models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] SST-2 LoRA..."
 	$(MAKE) eval-sst2-lora
-	@echo "[2/4] SST-2 Sparse L1..."
+	@echo "[2/5] SST-2 Sparse L1..."
 	$(MAKE) eval-sst2-l1
-	@echo "[3/4] SST-2 Sparse Prune..."
+	@echo "[3/5] SST-2 Sparse Prune..."
 	$(MAKE) eval-sst2-prune
-	@echo "[4/4] SST-2 Sparse SVD..."
+	@echo "[4/5] SST-2 Sparse SVD..."
 	$(MAKE) eval-sst2-svd
+	@echo "[5/5] SST-2 HIRA..."
+	$(MAKE) eval-sst2-hira
 	@echo "=== SST-2 evaluation complete! ==="
 
 speed-sst2-all:
 	@echo "=== Measuring inference speed for all SST-2 models ==="
-	@echo "[1/4] SST-2 LoRA..."
+	@echo "[1/5] SST-2 LoRA..."
 	$(MAKE) speed-sst2-lora
-	@echo "[2/4] SST-2 Sparse L1..."
+	@echo "[2/5] SST-2 Sparse L1..."
 	$(MAKE) speed-sst2-l1
-	@echo "[3/4] SST-2 Sparse Prune..."
+	@echo "[3/5] SST-2 Sparse Prune..."
 	$(MAKE) speed-sst2-prune
-	@echo "[4/4] SST-2 Sparse SVD..."
+	@echo "[4/5] SST-2 Sparse SVD..."
 	$(MAKE) speed-sst2-svd
+	@echo "[5/5] SST-2 HIRA..."
+	$(MAKE) speed-sst2-hira
 	@echo "=== SST-2 speed measurement complete! ==="
 
 # ========================================
@@ -196,39 +235,45 @@ speed-sst2-all:
 # ========================================
 
 train-imdb-all:
-	@echo "=== Training all IMDB models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] IMDB LoRA..."
+	@echo "=== Training all IMDB models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] IMDB LoRA..."
 	$(MAKE) train-imdb-lora
-	@echo "[2/4] IMDB Sparse L1..."
+	@echo "[2/5] IMDB Sparse L1..."
 	$(MAKE) train-imdb-l1
-	@echo "[3/4] IMDB Sparse Prune..."
+	@echo "[3/5] IMDB Sparse Prune..."
 	$(MAKE) train-imdb-prune
-	@echo "[4/4] IMDB Sparse SVD..."
+	@echo "[4/5] IMDB Sparse SVD..."
 	$(MAKE) train-imdb-svd
+	@echo "[5/5] IMDB HIRA..."
+	$(MAKE) train-imdb-hira
 	@echo "=== IMDB training complete! ==="
 
 eval-imdb-all:
-	@echo "=== Evaluating all IMDB models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] IMDB LoRA..."
+	@echo "=== Evaluating all IMDB models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] IMDB LoRA..."
 	$(MAKE) eval-imdb-lora
-	@echo "[2/4] IMDB Sparse L1..."
+	@echo "[2/5] IMDB Sparse L1..."
 	$(MAKE) eval-imdb-l1
-	@echo "[3/4] IMDB Sparse Prune..."
+	@echo "[3/5] IMDB Sparse Prune..."
 	$(MAKE) eval-imdb-prune
-	@echo "[4/4] IMDB Sparse SVD..."
+	@echo "[4/5] IMDB Sparse SVD..."
 	$(MAKE) eval-imdb-svd
+	@echo "[5/5] IMDB HIRA..."
+	$(MAKE) eval-imdb-hira
 	@echo "=== IMDB evaluation complete! ==="
 
 speed-imdb-all:
 	@echo "=== Measuring inference speed for all IMDB models ==="
-	@echo "[1/4] IMDB LoRA..."
+	@echo "[1/5] IMDB LoRA..."
 	$(MAKE) speed-imdb-lora
-	@echo "[2/4] IMDB Sparse L1..."
+	@echo "[2/5] IMDB Sparse L1..."
 	$(MAKE) speed-imdb-l1
-	@echo "[3/4] IMDB Sparse Prune..."
+	@echo "[3/5] IMDB Sparse Prune..."
 	$(MAKE) speed-imdb-prune
-	@echo "[4/4] IMDB Sparse SVD..."
+	@echo "[4/5] IMDB Sparse SVD..."
 	$(MAKE) speed-imdb-svd
+	@echo "[5/5] IMDB HIRA..."
+	$(MAKE) speed-imdb-hira
 	@echo "=== IMDB speed measurement complete! ==="
 
 # ========================================
@@ -236,39 +281,45 @@ speed-imdb-all:
 # ========================================
 
 train-wikitext2-all:
-	@echo "=== Training all WikiText2 models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] WikiText2 LoRA..."
+	@echo "=== Training all WikiText2 models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] WikiText2 LoRA..."
 	$(MAKE) train-wikitext2-lora
-	@echo "[2/4] WikiText2 Sparse L1..."
+	@echo "[2/5] WikiText2 Sparse L1..."
 	$(MAKE) train-wikitext2-l1
-	@echo "[3/4] WikiText2 Sparse Prune..."
+	@echo "[3/5] WikiText2 Sparse Prune..."
 	$(MAKE) train-wikitext2-prune
-	@echo "[4/4] WikiText2 Sparse SVD..."
+	@echo "[4/5] WikiText2 Sparse SVD..."
 	$(MAKE) train-wikitext2-svd
+	@echo "[5/5] WikiText2 HIRA..."
+	$(MAKE) train-wikitext2-hira
 	@echo "=== WikiText2 training complete! ==="
 
 eval-wikitext2-all:
-	@echo "=== Evaluating all WikiText2 models (LoRA, L1, Prune, SVD) ==="
-	@echo "[1/4] WikiText2 LoRA..."
+	@echo "=== Evaluating all WikiText2 models (LoRA, L1, Prune, SVD, HIRA) ==="
+	@echo "[1/5] WikiText2 LoRA..."
 	$(MAKE) eval-wikitext2-lora
-	@echo "[2/4] WikiText2 Sparse L1..."
+	@echo "[2/5] WikiText2 Sparse L1..."
 	$(MAKE) eval-wikitext2-l1
-	@echo "[3/4] WikiText2 Sparse Prune..."
+	@echo "[3/5] WikiText2 Sparse Prune..."
 	$(MAKE) eval-wikitext2-prune
-	@echo "[4/4] WikiText2 Sparse SVD..."
+	@echo "[4/5] WikiText2 Sparse SVD..."
 	$(MAKE) eval-wikitext2-svd
+	@echo "[5/5] WikiText2 HIRA..."
+	$(MAKE) eval-wikitext2-hira
 	@echo "=== WikiText2 evaluation complete! ==="
 
 speed-wikitext2-all:
 	@echo "=== Measuring inference speed for all WikiText2 models ==="
-	@echo "[1/4] WikiText2 LoRA..."
+	@echo "[1/5] WikiText2 LoRA..."
 	$(MAKE) speed-wikitext2-lora
-	@echo "[2/4] WikiText2 Sparse L1..."
+	@echo "[2/5] WikiText2 Sparse L1..."
 	$(MAKE) speed-wikitext2-l1
-	@echo "[3/4] WikiText2 Sparse Prune..."
+	@echo "[3/5] WikiText2 Sparse Prune..."
 	$(MAKE) speed-wikitext2-prune
-	@echo "[4/4] WikiText2 Sparse SVD..."
+	@echo "[4/5] WikiText2 Sparse SVD..."
 	$(MAKE) speed-wikitext2-svd
+	@echo "[5/5] WikiText2 HIRA..."
+	$(MAKE) speed-wikitext2-hira
 	@echo "=== WikiText2 speed measurement complete! ==="
 
 # ========================================

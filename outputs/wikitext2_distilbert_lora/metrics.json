@@ -1,0 +1,8 @@
+{
+  "val_acc": 1.0,
+  "val_perplexity": 1.000085891894714,
+  "loss": 8.588820621637643e-05,
+  "best_epoch": 2,
+  "max_allocated_vram_mb": 2073.33935546875,
+  "avg_step_time_ms": 83.05586672556426
+}

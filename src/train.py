@@ -2,12 +2,14 @@ import argparse
 import copy
 import time
 from pathlib import Path
+import math
 
 import torch
 from accelerate import Accelerator
 from torch.optim import AdamW
 from tqdm.auto import tqdm
-from transformers import get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup,AutoModelForSequenceClassification,AutoModelForMaskedLM
+
 
 from . import data, model, utils
 from .adapters.sparse_lora.sparse_lora import (
@@ -19,6 +21,12 @@ from .adapters.sparse_lora.sparse_lora import (
     apply_sparse_ffn_to_model,
     get_sparsity_statistics,
 )
+from .adapters.hira.hira_adapter import (
+    compute_hira_l1_loss,
+    get_hira_stats,
+    apply_hira_magnitude_pruning,
+    apply_hira_pruning_masks,
+)
 
 
 def parse_args():
@@ -27,25 +35,87 @@ def parse_args():
     return parser.parse_args()
 
 
-def evaluate(accelerator, model, dataloader):
+def evaluate(accelerator, model, dataloader, tokenizer):
     model.eval()
-    preds, labels = [], []
+    all_preds, all_labels = [], []
     total_loss = 0.0
+
+    # For MLM metrics
+    total_mlm_correct = 0
+    total_mlm_tokens = 0
+
     with torch.no_grad():
         for batch in dataloader:
             outputs = model(**batch)
-            loss = outputs.loss
-            logits = outputs.logits
-            total_loss += loss.detach().float()
-            pred = torch.argmax(logits, dim=-1)
-            preds.extend(accelerator.gather(pred).cpu().tolist())
-            labels.extend(accelerator.gather(batch["labels"]).cpu().tolist())
-    avg_loss = float(total_loss / max(1, len(dataloader)))
-    return {
-        "accuracy": utils.compute_accuracy(preds, labels),
-        "f1": utils.compute_f1(preds, labels),
-        "loss": avg_loss,
-    }
+            logits = outputs.logits          # could be (B, C) or (B, T, V)
+
+            # ---- classification vs MLM detection ----
+            if logits.dim() == 2:
+                # ====== SEQUENCE CLASSIFICATION (SST-2 / IMDB) =======
+                # logits: (B, num_labels)
+                loss = outputs.loss          # HF computes CE if batch has "labels"
+                total_loss += loss.detach().item()
+
+                # gather preds + labels for accuracy/F1
+                preds = torch.argmax(logits, dim=-1)   # (B,)
+                preds = accelerator.gather(preds).cpu().tolist()
+                labels = accelerator.gather(batch["labels"]).cpu().tolist()
+
+                all_preds.extend(preds)
+                all_labels.extend(labels)
+
+            elif logits.dim() == 3:
+                # ====== MASKED LM (WikiText-2) =======
+                # logits: (B, T, V)
+                # use input_ids as labels unless you already prepared batch["labels"]
+                labels = batch.get("labels", batch["input_ids"]).clone()  # (B, T)
+
+                # ignore pads
+                if tokenizer.pad_token_id is not None:
+                    labels[labels == tokenizer.pad_token_id] = -100
+
+                loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+                loss = loss_fct(
+                    logits.view(-1, logits.size(-1)),  # (B*T, V)
+                    labels.view(-1),                   # (B*T,)
+                )
+                total_loss += loss.detach().item()
+
+                # masked-token accuracy (optional but useful)
+                preds = logits.argmax(dim=-1)         # (B, T)
+                mask = labels != -100                 # (B, T)
+                correct = ((preds == labels) & mask).sum()
+                tokens = mask.sum()
+
+                # gather across processes
+                correct = accelerator.gather(correct).sum()
+                tokens = accelerator.gather(tokens).sum()
+
+                total_mlm_correct += correct.item()
+                total_mlm_tokens += tokens.item()
+
+            else:
+                raise RuntimeError(f"Unexpected logits dim: {logits.dim()}")
+
+    avg_loss = total_loss / max(1, len(dataloader))
+
+    # ---- Final metric summary ----
+    if total_mlm_tokens > 0:
+        # We ran MLM at least once → return MLM metrics
+        mlm_accuracy = total_mlm_correct / max(1, total_mlm_tokens)
+        perplexity = math.exp(avg_loss)
+        return {
+            "accuracy": mlm_accuracy,
+            "perplexity": perplexity,
+            "loss": avg_loss,
+        }
+    else:
+        # Only classification → return accuracy / F1
+        return {
+            "accuracy": utils.compute_accuracy(all_preds, all_labels),
+            "f1": utils.compute_f1(all_preds, all_labels),
+            "loss": avg_loss,
+        }
 
 
 def get_dataloaders(cfg):
@@ -82,8 +152,19 @@ def save_checkpoint(unwrapped_model, output_dir: Path):
     adapter_dir.mkdir(parents=True, exist_ok=True)
     full_dir.mkdir(parents=True, exist_ok=True)
     unwrapped_model.save_pretrained(adapter_dir, safe_serialization=True)
-    merged_model = copy.deepcopy(unwrapped_model).merge_and_unload()
-    merged_model.save_pretrained(full_dir, safe_serialization=True)
+    
+    # Only merge if it's a PEFT model (LoRA/Sparse LoRA), not for custom adapters like HIRA
+    if hasattr(unwrapped_model, 'merge_and_unload'):
+        try:
+            merged_model = copy.deepcopy(unwrapped_model).merge_and_unload()
+            merged_model.save_pretrained(full_dir, safe_serialization=True)
+        except Exception as e:
+            print(f"Error merging model: {e}")
+            print(f"Saving full model without merging")
+            unwrapped_model.save_pretrained(full_dir, safe_serialization=True)
+    else:
+        # For custom adapters like HIRA, save the full model directly
+        unwrapped_model.save_pretrained(full_dir, safe_serialization=True)
 
 
 def main():
@@ -106,7 +187,7 @@ def main():
     utils.ensure_dir(str(output_dir))
     utils.save_config(cfg, str(output_dir / "config_used.yaml"))
 
-    train_loader, val_loader, _ = get_dataloaders(cfg)
+    train_loader, val_loader, tokenizer = get_dataloaders(cfg)
     base_model = model.create_model(cfg)
 
     lr = float(cfg["lr"])
@@ -149,6 +230,11 @@ def main():
 
     # Layer-wise L1 weights (for non-uniform sparsity)
     layer_weights = cfg.get("layer_l1_weights", None)
+    
+    # Check if using HIRA
+    is_hira = hasattr(unwrapped_model, "hira_config")
+    hira_pruning_masks = None
+    hira_cfg = None
 
     if is_sparse_lora:
         sparse_cfg = unwrapped_model.sparse_config
@@ -188,6 +274,21 @@ def main():
                         total_training_steps
                     )
             accelerator.wait_for_everyone()
+    elif is_hira:
+        hira_cfg = unwrapped_model.hira_config
+        accelerator.print(f"\n=== HIRA Configuration ===")
+        accelerator.print(f"  Rank: {hira_cfg['r']}")
+        accelerator.print(f"  Alpha: {hira_cfg['alpha']}")
+        accelerator.print(f"  Dropout: {hira_cfg['dropout']}")
+        accelerator.print(f"  Target modules: {hira_cfg['target_modules']}")
+        if hira_cfg.get("l1_lambda", 0.0) > 0.0:
+            accelerator.print(f"  L1 lambda: {hira_cfg['l1_lambda']}")
+            if layer_weights:
+                accelerator.print(f"  Layer-wise L1 weights: {layer_weights}")
+        if hira_cfg.get("prune_ratio", 0.0) > 0.0:
+            prune_at_epoch = max(1, cfg["epochs"] - 1)
+            accelerator.print(f"  Prune ratio: {hira_cfg['prune_ratio']:.1%}")
+            accelerator.print(f"  Will prune at epoch {prune_at_epoch}, then fine-tune")
 
     for epoch in range(cfg["epochs"]):
         accelerator.print(f"Epoch {epoch + 1}/{cfg['epochs']}")
@@ -199,7 +300,26 @@ def main():
             global_step += 1
             step_start = time.time()
             outputs = base_model(**batch)
-            loss = outputs.loss
+            if cfg["task_name"] == "wikitext2":
+              logits = outputs["logits"]              # (B, T, V)
+              labels = batch["input_ids"]          # (B, T) for now
+
+              # (optional but recommended) ignore pad tokens in the loss
+              if tokenizer.pad_token_id is not None:
+                  labels = labels.clone()
+                  labels[labels == tokenizer.pad_token_id] = -100
+
+              loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
+
+              # reshape:
+              #   (B, T, V) → (B*T, V)
+              #   (B, T)    → (B*T)
+              loss = loss_fct(
+                  logits.view(-1, logits.size(-1)),  # (B*T, V)
+                  labels.view(-1)                    # (B*T,)
+              )
+            else:
+              loss = outputs.loss
 
             # Add L1 regularization for Sparse LoRA after warmup
             if is_sparse_lora and sparse_cfg["method"] == "l1":
@@ -207,6 +327,15 @@ def main():
                     l1_lambda = float(sparse_cfg.get("l1_lambda", 0.0))
                     l1_loss = compute_l1_loss(base_model, layer_weights=layer_weights)
                     l1_weighted = l1_lambda * l1_loss
+                    loss = loss + l1_weighted
+                    running_l1_loss += l1_weighted.detach().float()
+            
+            # Add L1 regularization for HIRA
+            if is_hira and hira_cfg is not None:
+                l1_lambda = float(hira_cfg.get("l1_lambda", 0.0))
+                if l1_lambda > 0.0:
+                    hira_l1_loss = compute_hira_l1_loss(base_model, layer_weights=layer_weights)
+                    l1_weighted = l1_lambda * hira_l1_loss
                     loss = loss + l1_weighted
                     running_l1_loss += l1_weighted.detach().float()
 
@@ -218,6 +347,10 @@ def main():
             # Apply pruning masks if using prune method
             if is_sparse_lora and sparse_cfg["method"] == "prune" and pruning_masks is not None:
                 apply_pruning_masks(base_model, pruning_masks)
+            
+            # Apply pruning masks for HIRA
+            if is_hira and hira_pruning_masks is not None:
+                apply_hira_pruning_masks(base_model, hira_pruning_masks)
 
             running_loss += loss.detach().float()
             step_times.append((time.time() - step_start) * 1000.0)
@@ -227,6 +360,9 @@ def main():
         # Print training loss
         avg_train_loss = float(running_loss / max(1, len(train_loader)))
         if is_sparse_lora and sparse_cfg["method"] == "l1":
+            avg_l1_loss = float(running_l1_loss / max(1, len(train_loader)))
+            accelerator.print(f"  Train loss: {avg_train_loss:.4f} (L1 loss: {avg_l1_loss:.6f})")
+        elif is_hira and hira_cfg is not None and hira_cfg.get("l1_lambda", 0.0) > 0.0:
             avg_l1_loss = float(running_l1_loss / max(1, len(train_loader)))
             accelerator.print(f"  Train loss: {avg_train_loss:.4f} (L1 loss: {avg_l1_loss:.6f})")
         else:
@@ -244,6 +380,19 @@ def main():
                 )
                 apply_pruning_masks(base_model, pruning_masks)
                 accelerator.print(f"Pruning applied. Will fine-tune for {cfg['epochs'] - prune_at_epoch} more epoch(s)\n")
+        
+        # Apply pruning at the designated epoch for HIRA
+        if is_hira and hira_cfg is not None and hira_cfg.get("prune_ratio", 0.0) > 0.0:
+            if epoch + 1 == prune_at_epoch and hira_pruning_masks is None:
+                accelerator.print(f"\n=== Applying HIRA Magnitude Pruning at Epoch {epoch + 1} ===")
+                unwrapped = accelerator.unwrap_model(base_model)
+                hira_pruning_masks = apply_hira_magnitude_pruning(
+                    unwrapped,
+                    prune_ratio=hira_cfg["prune_ratio"],
+                    device=device
+                )
+                apply_hira_pruning_masks(base_model, hira_pruning_masks)
+                accelerator.print(f"HIRA pruning applied. Will fine-tune for {cfg['epochs'] - prune_at_epoch} more epoch(s)\n")
 
         # Log sparsity statistics
         if is_sparse_lora:
@@ -259,11 +408,26 @@ def main():
                 # For L1/Prune, log parameter sparsity
                 stats = get_sparsity_stats(base_model)
                 accelerator.print(f"  Sparsity: {stats['sparsity_ratio']:.2%} | Nonzero params: {stats['nonzero_params']:,}")
+        
+        # Log HIRA statistics
+        if is_hira:
+            hira_stats = get_hira_stats(base_model)
+            if hira_stats["total_hira_params"] > 0:
+                accelerator.print(
+                    f"  HIRA layers: {hira_stats['num_hira_layers']} | "
+                    f"Sparsity: {hira_stats['sparsity_ratio']:.2%} | "
+                    f"Nonzero params: {hira_stats['nonzero_params']:,}"
+                )
 
-        metrics = evaluate(accelerator, base_model, val_loader)
-        accelerator.print(
-            f"  Val acc: {metrics['accuracy']:.4f} | Val f1: {metrics['f1']:.4f} | Loss: {metrics['loss']:.4f}"
-        )
+        metrics = evaluate(accelerator, base_model, val_loader,tokenizer)
+        try:
+          accelerator.print(
+              f"  Val acc: {metrics['accuracy']:.4f} | Val f1: {metrics['f1']:.4f} | Loss: {metrics['loss']:.4f}"
+          )
+        except:
+          accelerator.print(
+            f"  Val acc: {metrics['accuracy']:.4f} | Val perplexity: {metrics['perplexity']:.4f} | Loss: {metrics['loss']:.4f}"
+          )
         if metrics["accuracy"] >= best_metrics["accuracy"]:
             best_metrics = {**metrics, "epoch": epoch + 1}
 
@@ -275,14 +439,25 @@ def main():
 
 
     avg_step_time = float(sum(step_times) / max(1, len(step_times)))
-    metrics_payload = {
-        "val_acc": best_metrics["accuracy"],
-        "val_f1": best_metrics["f1"],
-        "loss": best_metrics["loss"],
-        "best_epoch": best_metrics["epoch"],
-        "max_allocated_vram_mb": utils.get_max_vram_mb(),
-        "avg_step_time_ms": avg_step_time,
-    }
+    try:
+      metrics_payload = {
+          "val_acc": best_metrics["accuracy"],
+          "val_f1": best_metrics["f1"],
+          "loss": best_metrics["loss"],
+          "best_epoch": best_metrics["epoch"],
+          "max_allocated_vram_mb": utils.get_max_vram_mb(),
+          "avg_step_time_ms": avg_step_time,
+      }
+    except:
+      metrics_payload = {
+          "val_acc": best_metrics["accuracy"],
+          "val_perplexity": best_metrics["perplexity"],
+          "loss": best_metrics["loss"],
+          "best_epoch": best_metrics["epoch"],
+          "max_allocated_vram_mb": utils.get_max_vram_mb(),
+          "avg_step_time_ms": avg_step_time,
+      }
+
 
     # Add sparsity metrics if using Sparse LoRA
     if is_sparse_lora:
@@ -302,6 +477,23 @@ def main():
             metrics_payload["ffn_sparsity"] = sparse_cfg["ffn_sparsity"]
             if svd_estimators:
                 metrics_payload["num_ffn_estimators"] = len(svd_estimators.get("ffn", {}))
+    
+    # Add HIRA metrics
+    if is_hira and hira_cfg is not None:
+        final_hira_stats = get_hira_stats(accelerator.unwrap_model(base_model))
+        metrics_payload.update({
+            "adapter_type": "hira",
+            "hira_rank": hira_cfg["r"],
+            "hira_alpha": hira_cfg["alpha"],
+            "final_sparsity": final_hira_stats["sparsity_ratio"],
+            "nonzero_params": final_hira_stats["nonzero_params"],
+            "total_hira_params": final_hira_stats["total_hira_params"],
+            "num_hira_layers": final_hira_stats["num_hira_layers"],
+        })
+        if hira_cfg.get("l1_lambda", 0.0) > 0.0:
+            metrics_payload["l1_lambda"] = hira_cfg["l1_lambda"]
+        if hira_cfg.get("prune_ratio", 0.0) > 0.0:
+            metrics_payload["prune_ratio"] = hira_cfg["prune_ratio"]
 
     utils.write_json(metrics_payload, str(output_dir / "metrics.json"))
     accelerator.print(f"Metrics saved to {output_dir / 'metrics.json'}")
