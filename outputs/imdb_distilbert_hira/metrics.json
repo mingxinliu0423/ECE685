@@ -4,7 +4,7 @@
   "loss": 0.30457739108968573,
   "best_epoch": 3,
   "max_allocated_vram_mb": 1519.53564453125,
-  "avg_step_time_ms": 79.10651046092333,
+  "avg_step_time_ms": 80.08816517296822,
   "adapter_type": "hira",
   "hira_rank": 4,
   "hira_alpha": 8,

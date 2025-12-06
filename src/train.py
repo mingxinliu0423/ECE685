@@ -26,6 +26,7 @@ from .adapters.hira.hira_adapter import (
     get_hira_stats,
     apply_hira_magnitude_pruning,
     apply_hira_pruning_masks,
+    save_hira_adapter_config,
 )
 
 
@@ -165,6 +166,11 @@ def save_checkpoint(unwrapped_model, output_dir: Path):
     else:
         # For custom adapters like HIRA, save the full model directly
         unwrapped_model.save_pretrained(full_dir, safe_serialization=True)
+        if hasattr(unwrapped_model, 'hira_config'):
+            try:
+                save_hira_adapter_config(unwrapped_model, str(adapter_dir))
+            except Exception as e:
+                print(f"Warning: Failed to save HIRA adapter config: {e}")
 
 
 def main():

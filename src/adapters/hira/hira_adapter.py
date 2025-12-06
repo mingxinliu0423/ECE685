@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional
 from peft import PeftConfig, TaskType
+from pathlib import Path
+
+import json
+import os
+
 
 
 class HiraConfig(PeftConfig):
@@ -423,3 +428,59 @@ def build_hira_adapter(model, cfg: Dict[str, Any]):
     print(f"  Replaced {replaced} modules")
     
     return model
+
+
+def save_hira_adapter_config(model, output_dir: str, base_model_name: Optional[str] = None) -> None:
+    """
+    Save HIRA adapter configuration to adapter_config.json in the output directory.
+    
+    This function saves the HIRA configuration in a format compatible with
+    how PEFT adapters save their config, making it easier to load later.
+    
+    Args:
+        model: Model with HIRA adapters (must have hira_config attribute)
+        output_dir: Directory path where adapter_config.json should be saved
+        base_model_name: Optional base model name/path (if not provided, tries to infer from model)
+    """
+    if not hasattr(model, "hira_config"):
+        raise ValueError("Model does not have hira_config attribute. Ensure build_hira_adapter was called.")
+    
+    config = model.hira_config.copy()
+    
+    # Try to get base model name from various sources
+    base_model = base_model_name
+    if base_model is None:
+        # Try to get from model attributes
+        base_model = getattr(model, "base_model_name_or_path", None)
+        if base_model is None and hasattr(model, "config"):
+            # Try to get from model config
+            model_config = model.config
+            if hasattr(model_config, "_name_or_path"):
+                base_model = model_config._name_or_path
+            elif hasattr(model_config, "name_or_path"):
+                base_model = model_config.name_or_path
+    
+    # Add metadata to match PEFT adapter config format
+    adapter_config = {
+        "peft_type": "HIRA",
+        "task_type": "SEQ_CLS",
+        "base_model_name_or_path": base_model,
+        "inference_mode": False,
+        "r": config.get("r", 8),
+        "alpha": config.get("alpha", 16),
+        "dropout": config.get("dropout", 0.0),
+        "target_modules": config.get("target_modules", []),
+        "bias": "none",
+        "l1_lambda": config.get("l1_lambda", 0.0),
+        "prune_ratio": config.get("prune_ratio", 0.0),
+    }
+    
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    config_file = output_path / "adapter_config.json"
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(adapter_config, f, indent=2)
+    
+    print(f"Saved HIRA adapter config to {config_file}")
+
